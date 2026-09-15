@@ -1,0 +1,355 @@
+{
+  "name": "Speed-to-Lead — Reply Handle",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "maxResults": 5,
+        "filters": {},
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "e8817dd3-0f27-4066-ac0c-1493edf948b3",
+      "name": "Gmail Trigger - Inbound Reply"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM speed_leads\nWHERE sent_thread_id = $1 AND status = 'awaiting_qualification'\nLIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ $json.threadId ?? null }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        224,
+        0
+      ],
+      "id": "361c787f-1131-45f9-a50a-0d80644e09c1",
+      "name": "Postgres - Look Up Awaiting Lead"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4.1-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4.1-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "=Here is the lead's raw email reply:\n\n{{ $('Gmail Trigger - Inbound Reply').item.json.text }}\n\nExtract the four qualifying answers now, following the rules exactly."
+            },
+            {
+              "role": "system",
+              "content": "You are extracting structured qualifying-lead answers from a raw email reply. The reply may include the lead's actual answer followed by a quoted copy of the original email thread (usually marked by a line like \"On [date] ... wrote:\" followed by lines starting with \">\"). You must only extract information from the lead's own new reply text, and completely ignore anything in the quoted thread below it.\n\nThe lead was asked four questions, though they may not have answered in a clearly numbered format:\n1. What they're hoping to solve or get help with (their need/problem)\n2. When they want to get started (their timeline)\n3. Whether they have a budget in mind (their budget)\n4. Whether they are the final decision-maker (their authority)\n\nExtract the answer to each question as a short, clean string in the lead's own words — do not rephrase, summarize with your own opinion, or add information they didn't state. If the lead did not address a particular question at all, use null for that field, not an empty string or a guess.\n\nOutput strict, valid JSON only, with exactly this shape and these four keys, nothing else — no markdown code fences, no explanation, no extra text before or after:\n\n{\n  \"need\": \"string or null\",\n  \"timeline\": \"string or null\",\n  \"budget\": \"string or null\",\n  \"authority\": \"string or null\"\n}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        432,
+        0
+      ],
+      "id": "6c3aa520-c110-4465-9140-014c802e5aec",
+      "name": "LLM - Extract Qualifying Answers",
+      "retryOnFail": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE speed_leads\nSET status = 'failed', error_log = 'failed to extract qualifying answers'\nWHERE external_id = $1;",
+        "options": {
+          "queryReplacement": "={{ $('Postgres - Look Up Awaiting Lead').item.json.external_id ?? null }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        800,
+        96
+      ],
+      "id": "28a79442-a400-44e1-920c-686c69e4b25b",
+      "name": "Postgres - Mark Failed (Extraction Failed)"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "#leads-alerts",
+          "mode": "name"
+        },
+        "text": "=⚠️ Lead needs manual follow-up \nName: {{ $('Postgres - Look Up Awaiting Lead').item.json.full_name }} \nPhone: {{ $('Postgres - Look Up Awaiting Lead').item.json.phone }} \nEmail: {{ $('Postgres - Look Up Awaiting Lead').item.json.email }} \nSource: {{ $('Postgres - Look Up Awaiting Lead').item.json.source }} \nReason: {{ $('Postgres - Mark Failed (Extraction Failed)').item.json.error_log }} \nPlease follow up manually.",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        1024,
+        96
+      ],
+      "id": "66af5765-c931-4b81-9667-e7928318adee",
+      "name": "Slack - Alert Manual Follow-Up Needed",
+      "webhookId": "3978daa5-ff3c-4bae-8ae3-7d4b7a9cc889"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "484f85cb-4b6f-47eb-bc41-ae96f8320050",
+              "name": "qualifying_answers",
+              "value": "={{ JSON.parse($json.output[0].content[0].text) }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        800,
+        -96
+      ],
+      "id": "ffc64f86-6313-4064-8973-3b3146107689",
+      "name": "Set - Parse Extracted Answers",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE speed_leads\nSET qualifying_answers = $1, status = 'qualified'\nWHERE external_id = $2;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify($json.qualifying_answers) }} {{ $('Postgres - Look Up Awaiting Lead').item.json.external_id ?? null }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1024,
+        -112
+      ],
+      "id": "c79d727b-18fe-4a7f-8b35-b0e65d379b2b",
+      "name": "Postgres - Save Qualifying Answers"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pull the qualifying answers and external_id from earlier nodes,\n// since this node's immediate input only has {\"success\": true}\nconst answers = $('Set - Parse Extracted Answers').item.json.qualifying_answers;\nconst externalId = $('Postgres - Look Up Awaiting Lead').item.json.external_id;\n\nlet score = 0;\nconst reasons = [];\n\n// --- Need (max 25 points) ---\n// A stated need earns points just for existing; a vague \"just curious\"\n// type answer still counts as present, since we're not judging quality here.\nif (answers.need && answers.need.trim().length > 0) {\n  score += 25;\n  reasons.push('need stated (+25)');\n}\n\n// --- Timeline (max 30 points) ---\n// Keyword-based scoring: sooner language scores higher.\n// Checked in order from most urgent to least, first match wins.\nconst timelineText = (answers.timeline || '').toLowerCase();\nif (/week|asap|immediately|urgent/.test(timelineText)) {\n  score += 30;\n  reasons.push('urgent timeline (+30)');\n} else if (/month/.test(timelineText)) {\n  score += 20;\n  reasons.push('this-month timeline (+20)');\n} else if (/quarter/.test(timelineText)) {\n  score += 10;\n  reasons.push('this-quarter timeline (+10)');\n} else if (/explor|just looking|not sure/.test(timelineText)) {\n  score += 0;\n  reasons.push('exploratory timeline (+0)');\n} else if (timelineText.trim().length > 0) {\n  // Said something, but it didn't match a known pattern —\n  // give partial credit rather than zero, since they did engage.\n  score += 5;\n  reasons.push('unclassified timeline (+5)');\n}\n\n// --- Budget (max 30 points) ---\n// Extract the first number mentioned (handles \"$1600\", \"1,600\", \"around 500\").\nconst budgetText = answers.budget || '';\nconst budgetMatch = budgetText.replace(/,/g, '').match(/\\d+/);\nif (budgetMatch) {\n  const amount = parseInt(budgetMatch[0], 10);\n  if (amount >= 1000) {\n    score += 30;\n    reasons.push(`budget ${amount} >= 1000 (+30)`);\n  } else if (amount >= 300) {\n    score += 15;\n    reasons.push(`budget ${amount} >= 300 (+15)`);\n  } else {\n    score += 5;\n    reasons.push(`budget ${amount} stated but low (+5)`);\n  }\n} else if (budgetText.trim().length > 0) {\n  // They said something (\"not sure yet\", \"flexible\") but no number given.\n  score += 5;\n  reasons.push('budget mentioned, no number (+5)');\n}\n\n// --- Authority (max 15 points) ---\nconst authorityText = (answers.authority || '').toLowerCase();\nif (/yes|i am|i'm the one|final call|my decision/.test(authorityText)) {\n  score += 15;\n  reasons.push('confirmed decision-maker (+15)');\n} else if (/no|others|team|involve/.test(authorityText)) {\n  score += 0;\n  reasons.push('not sole decision-maker (+0)');\n}\n\nreturn [{\n  json: {\n    external_id: externalId,\n    score,\n    score_reasons: reasons // useful for debugging/auditing why a lead scored the way it did\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1248,
+        -112
+      ],
+      "id": "99216f5b-bc74-43a4-80ac-ed42dfc409f9",
+      "name": "Code - Compute Lead Score"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE speed_leads\nSET score = $1\nWHERE external_id = $2;",
+        "options": {
+          "queryReplacement": "={{ $json.score }} {{ $json.external_id }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1472,
+        -112
+      ],
+      "id": "a0b278a3-8a5b-4959-8642-e55921e4ccb2",
+      "name": "Postgres - Update Score"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "#leads-alerts",
+          "mode": "name"
+        },
+        "text": "=🎯 Qualified Lead — Score: {{ $('Code - Compute Lead Score').item.json.score }}/100  \nName: {{ $('Postgres - Look Up Awaiting Lead').item.json.full_name }} \nPhone: {{ $('Postgres - Look Up Awaiting Lead').item.json.phone }} \nEmail: {{ $('Postgres - Look Up Awaiting Lead').item.json.email }} \nSource: {{ $('Postgres - Look Up Awaiting Lead').item.json.source }}  \nNeed: {{ $('Set - Parse Extracted Answers').item.json.qualifying_answers.need }} \nTimeline: {{ $('Set - Parse Extracted Answers').item.json.qualifying_answers.timeline }} \nBudget: {{ $('Set - Parse Extracted Answers').item.json.qualifying_answers.budget }} \nAuthority: {{ $('Set - Parse Extracted Answers').item.json.qualifying_answers.authority }} \nReach out now while the lead is warm.",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        1696,
+        -112
+      ],
+      "id": "201ddc7b-88a5-426a-9fae-1bd91641dd09",
+      "name": "Slack - Alert Qualified Lead",
+      "webhookId": "be4029a2-f1ca-4467-99b7-b26373915577"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE speed_leads\nSET alert_sent_at = now(), status = 'alerted'\nWHERE external_id = $1;",
+        "options": {
+          "queryReplacement": "={{ $('Postgres - Look Up Awaiting Lead').item.json.external_id ?? null }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1920,
+        -112
+      ],
+      "id": "2561c51f-83a8-4b36-a963-6f771645b364",
+      "name": "Postgres - Mark Alerted"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gmail Trigger - Inbound Reply": {
+      "main": [
+        [
+          {
+            "node": "Postgres - Look Up Awaiting Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres - Look Up Awaiting Lead": {
+      "main": [
+        [
+          {
+            "node": "LLM - Extract Qualifying Answers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM - Extract Qualifying Answers": {
+      "main": [
+        [
+          {
+            "node": "Set - Parse Extracted Answers",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Postgres - Mark Failed (Extraction Failed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres - Mark Failed (Extraction Failed)": {
+      "main": [
+        [
+          {
+            "node": "Slack - Alert Manual Follow-Up Needed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set - Parse Extracted Answers": {
+      "main": [
+        [
+          {
+            "node": "Postgres - Save Qualifying Answers",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Postgres - Mark Failed (Extraction Failed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres - Save Qualifying Answers": {
+      "main": [
+        [
+          {
+            "node": "Code - Compute Lead Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Compute Lead Score": {
+      "main": [
+        [
+          {
+            "node": "Postgres - Update Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres - Update Score": {
+      "main": [
+        [
+          {
+            "node": "Slack - Alert Qualified Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack - Alert Qualified Lead": {
+      "main": [
+        [
+          {
+            "node": "Postgres - Mark Alerted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "c4d5bb0e-2b2d-4cc6-8ff8-ee6eeb1d961f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "YOUR_N8N_INSTANCE_ID"
+  },
+  "nodeGroups": [],
+  "id": "guvRQN7BtVYF2puk",
+  "tags": []
+}

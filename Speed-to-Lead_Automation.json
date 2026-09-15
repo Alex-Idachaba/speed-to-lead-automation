@@ -1,0 +1,527 @@
+{
+  "name": "Speed-to-Lead Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "1811c9b7-f40f-4c4f-9370-3050ced9cbe9",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1280,
+        192
+      ],
+      "id": "398176af-8718-4012-9fe8-77d0afe6419b",
+      "name": "Webhook - New Lead Intake",
+      "webhookId": "1811c9b7-f40f-4c4f-9370-3050ced9cbe9"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "38b562f2-d3f7-4106-8aaf-1eeff6865131",
+              "leftValue": "={{ $json.body.external_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "2e6c03d9-3df8-4425-a834-3bead53a6255",
+              "leftValue": "={{ $json.body.email }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -816,
+        192
+      ],
+      "id": "1dcfefb1-71fa-44bc-a8c1-e86f5925fde4",
+      "name": "IF - Validate Lead Payload"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO speed_leads (external_id, full_name, email, phone, source, status)\nVALUES ($1, $2, $3, $4, $5, 'new')\nON CONFLICT (external_id) DO NOTHING\nRETURNING id, external_id, status;",
+        "options": {
+          "queryReplacement": "={{ $json.body.external_id ?? null }}, {{ $json.body.full_name ?? null }}, {{ $json.body.email ?? null }}, {{ $json.body.phone ?? null }}, {{ $json.body.source ?? null }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -592,
+        96
+      ],
+      "id": "7c81a3f9-fe8c-46f3-b982-c44a9da139ae",
+      "name": "Postgres - Upsert Lead"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO speed_leads (external_id, full_name, email, phone, source, status, error_log)\nVALUES ($1, $2, $3, $4, $5, 'failed', 'missing external_id or email')\nON CONFLICT (external_id) DO NOTHING\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ $json.body.external_id ?? null }},{{ $json.body.full_name ?? null }},{{ $json.body.email ?? null }},{{ $json.body.phone ?? null }},{{ $json.body.source ?? null }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -592,
+        288
+      ],
+      "id": "17c794d6-f9ad-41ee-bb62-7e5ec220f4fe",
+      "name": "Postgres - Log Failed Validation"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4.1-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4.1-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "=Lead's name: {{ $('Webhook - New Lead Intake').item.json.body.full_name }}\nLead's source: {{ $('Webhook - New Lead Intake').item.json.body.source }}\nBusiness name: {{ $('Set - Business Info').item.json.business_name }}\n\nWrite the first-touch message now."
+            },
+            {
+              "role": "system",
+              "content": "=You are drafting a short, personalized first-contact SMS message on behalf of a real sales representative at {{ $('Set - Business Info').item.json.business_name }}, who is responding quickly to a new lead. Your only goal is to make the lead feel like a real person at {{ $('Set - Business Info').item.json.business_name }} noticed their inquiry fast and wants to have a quick conversation — not to sell, pitch, or explain any product or service.\n\nRules:\n- Keep it to 1–2 short sentences, suitable for SMS.\n- Use the lead's first name naturally, not formally.\n- Reference where they came from (the source) only if it helps the message feel specific, not generic.\n- Sign off briefly with {{ $('Set - Business Info').item.json.business_name }} so the message doesn't read as anonymous or automated — e.g. \n\"— The {{ $('Set - Business Info').item.json.business_name }} or similar, kept short.\n- Keep the {{ $('Set - Business Info').item.json.business_name }} on a new line.\n- The sales representative's name is not supposed to appear in the message; you only need to sign off at the end of the message.\n- Do not invent details about what the lead wants, needs, or asked about — you only know their name and source, nothing else.\n- Do not make any promises, mention pricing, or describe any product/service.\n- Tone: warm, brief, human — like a quick text from a person, not a marketing message.\n- Do not use emojis, exclamation-heavy language, or sales language like \"amazing,\" \"exclusive,\" or \"act now.\"\n- Output only the message text itself. No greeting labels, no quotation marks, no explanation of what you wrote."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        -368,
+        96
+      ],
+      "id": "fb12b73e-a8a2-4bf6-8a72-6be5677f054e",
+      "name": "LLM - Draft First-Touch Message",
+      "retryOnFail": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "86e486a4-1e8e-4fe5-9ec5-6adea250f288",
+              "name": "business_name",
+              "value": "Automation Team",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        -1040,
+        192
+      ],
+      "id": "9aa71b02-47ea-43ef-80ee-4b9ae7b6bda9",
+      "name": "Set - Business Info"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "2c9a0ab9-ce0f-458d-aba2-a2381d1a734a",
+              "name": "message_text",
+              "value": "=Hi {{ $('Webhook - New Lead Intake').item.json.body.full_name }}, thanks for reaching out — a real person from the team saw your message and will follow up with you shortly. \n— Nox Automation Team.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        0,
+        256
+      ],
+      "id": "83ce60a1-ef60-46b3-86f8-fe8255f4173f",
+      "name": "Set - Fallback Message"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5e01808e-6acc-466d-b46f-36af280d709a",
+              "name": "message_text",
+              "value": "={{ $json.output[0].content[0].text }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        0,
+        0
+      ],
+      "id": "03a4b0f6-8407-42fa-baa3-aa3b34ebd05e",
+      "name": "Set - Extract LLM Message"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b95e34b4-a626-41b2-b24a-5631b21b687d",
+              "name": "message_text",
+              "value": "={{ $json.message_text }}",
+              "type": "string"
+            },
+            {
+              "id": "1e99d0d8-c2b7-4bd0-a0f0-1d912e31ecd8",
+              "name": "email",
+              "value": "={{ $('Webhook - New Lead Intake').item.json.body.email ?? null }}",
+              "type": "string"
+            },
+            {
+              "id": "27ef7689-5d84-4389-8018-0160fa970fee",
+              "name": "phone",
+              "value": "={{ $('Webhook - New Lead Intake').item.json.body.phone ?? null }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        288,
+        112
+      ],
+      "id": "484365bb-4b7d-4f8b-93f6-8f891e4fd1cb",
+      "name": "Set - Prepare Contact Fields"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE speed_leads\nSET first_response_at = now(), response_channel = 'email', status = 'responded'\nWHERE external_id = $1;",
+        "options": {
+          "queryReplacement": "={{ $('Webhook - New Lead Intake').item.json.body.external_id ?? null }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        752,
+        16
+      ],
+      "id": "26773f96-60c3-4b35-b020-211a87da5871",
+      "name": "Postgres - Log Email Response"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE speed_leads\nSET status = 'failed', error_log = 'email delivery failed'\nWHERE external_id = $1;",
+        "options": {
+          "queryReplacement": "={{ $('Webhook - New Lead Intake').item.json.body.external_id ?? null }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        752,
+        208
+      ],
+      "id": "0a8df394-63c5-4291-86b6-db3d061e9cb5",
+      "name": "Postgres - Mark Failed (Unreached)"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "#leads-alerts",
+          "mode": "name"
+        },
+        "text": "=⚠️ Lead not reached — email failed \nName: {{ $('Webhook - New Lead Intake').item.json.body.full_name }} \nPhone: {{ $('Webhook - New Lead Intake').item.json.body.phone }} \nEmail: {{ $('Webhook - New Lead Intake').item.json.body.email }} \nSource: {{ $('Webhook - New Lead Intake').item.json.body.source }} \nPlease follow up manually.",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        976,
+        208
+      ],
+      "id": "2e2ac8bf-ca46-4144-ac54-04be274eecda",
+      "name": "Slack - Alert Lead Not Reached",
+      "webhookId": "243cdafa-74a1-4cb0-963f-8f11839ad471"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Set - Prepare Contact Fields').item.json.email }}",
+        "subject": "Following up on your message",
+        "emailType": "text",
+        "message": "={{ $('Set - Prepare Contact Fields').item.json.message_text }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        496,
+        112
+      ],
+      "id": "951982c7-19f4-445b-a80b-361ddd4d88fa",
+      "name": "Gmail - Send First-Touch Email",
+      "webhookId": "b376a9cf-45ea-4421-8e7e-6f4488ad6310",
+      "retryOnFail": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Set - Prepare Contact Fields').item.json.email }}",
+        "subject": "Quick follow-up",
+        "emailType": "text",
+        "message": "=Hi {{ $('Webhook - New Lead Intake').item.json.body.full_name }}, \nThanks for reaching out! To help us assist you better, could you share:  \n1. What are you hoping to solve or get help with? \n2. When are you looking to get started — this month, this quarter, or just exploring? \n3. Do you have a budget range in mind? \n4. Are you the one making the final call, or will others be involved?\n\nFeel free to just reply to this email with your answers.\n{{ $('Set - Business Info').item.json.business_name }}.\n",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        976,
+        16
+      ],
+      "id": "b589e24d-5827-4506-b4d0-6c97dc190f2a",
+      "name": "Gmail - Send Qualifying Questions",
+      "webhookId": "fc07ee56-eac5-474f-b3e2-458b05212a6a",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE speed_leads\nSET status = 'awaiting_qualification', sent_thread_id = $1\nWHERE external_id = $2;",
+        "options": {
+          "queryReplacement": "={{ $('Gmail - Send Qualifying Questions').item.json.threadId ?? null }}\n{{ $('Webhook - New Lead Intake').item.json.body.external_id ?? null }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1216,
+        0
+      ],
+      "id": "520b02a3-6195-47f2-babe-5fd673e24188",
+      "name": "Postgres - Mark Awaiting Qualification"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook - New Lead Intake": {
+      "main": [
+        [
+          {
+            "node": "Set - Business Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Validate Lead Payload": {
+      "main": [
+        [
+          {
+            "node": "Postgres - Upsert Lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Postgres - Log Failed Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres - Upsert Lead": {
+      "main": [
+        [
+          {
+            "node": "LLM - Draft First-Touch Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set - Business Info": {
+      "main": [
+        [
+          {
+            "node": "IF - Validate Lead Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM - Draft First-Touch Message": {
+      "main": [
+        [
+          {
+            "node": "Set - Extract LLM Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set - Fallback Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set - Fallback Message": {
+      "main": [
+        [
+          {
+            "node": "Set - Prepare Contact Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set - Extract LLM Message": {
+      "main": [
+        [
+          {
+            "node": "Set - Prepare Contact Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set - Prepare Contact Fields": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Send First-Touch Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres - Mark Failed (Unreached)": {
+      "main": [
+        [
+          {
+            "node": "Slack - Alert Lead Not Reached",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail - Send First-Touch Email": {
+      "main": [
+        [
+          {
+            "node": "Postgres - Log Email Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Postgres - Mark Failed (Unreached)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres - Log Email Response": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Send Qualifying Questions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail - Send Qualifying Questions": {
+      "main": [
+        [
+          {
+            "node": "Postgres - Mark Awaiting Qualification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Postgres - Mark Failed (Unreached)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "c15f4b16-e2a3-4748-85c3-7af681f5eec7",
+  "meta": {
+    "instanceId": "YOUR_N8N_INSTANCE_ID"
+  },
+  "nodeGroups": [],
+  "id": "fyr0tqyzxHpaO8l7",
+  "tags": []
+}
