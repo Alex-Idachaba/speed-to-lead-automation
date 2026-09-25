@@ -1,29 +1,58 @@
 # Speed-to-Lead Automation
 
-**Pattern:** Routing
+**Pattern:** Routing · **Stack:** n8n, Gmail API (send + threading) · **Status:** Complete (tested with sample leads)
 
-Instant lead response automation — a personalized first-touch email and qualifying questions the moment a new lead comes in, with no staffing required outside business hours.
+Replies to every new inquiry within minutes with a personalized email and qualifying questions, then matches each reply back to the right conversation, so no lead waits until Monday for a response.
 
-## Problem
+**Property management application:** rental inquiries and property-owner inquiries answered instantly, day or night, with qualifying questions already asked before your team steps in.
 
-Leads contacted within minutes convert far better than leads that wait even a few hours, but most small businesses can't staff someone to watch the inbox around the clock. A lead who fills out a form after hours usually waits until the next business day for a reply.
+---
 
-## Build
+## The problem
 
-Two decoupled n8n workflows. The first fires the moment a new lead arrives, sending an immediate personalized email with qualifying questions — gathering the information a salesperson would normally ask for on a first call, before a human is involved. The second handles replies, matching them to the correct lead conversation using Gmail's `threadId` so context stays attached to the right person even when replies arrive out of order or after a delay.
+Leads contacted within minutes convert far better than leads that wait hours, but most small teams can't staff an inbox around the clock. An inquiry sent after hours usually waits until the next business day, and by then the lead has often moved on.
 
-## Outcome
+## How it works
 
-Every lead gets a fast, personalized response with no after-hours staffing, and qualifying answers are often already collected by the time a salesperson picks up the conversation.
+**Workflow 1:** new lead → personalized first-touch email with qualifying questions
 
-## Reliability Notes
+**Workflow 2:** incoming reply → match to lead by Gmail threadId → capture qualifying answers → hand off to the team
 
-The `threadId`-based matching is the key reliability piece: it keeps replies correctly attached to their originating lead even under real-world timing irregularities, rather than relying on fragile assumptions like message order.
+- The first workflow fires the moment a lead arrives and gathers the information a person would normally ask for on a first call.
+- The second workflow handles replies independently, matching each one to its originating lead using Gmail's `threadId`.
 
-## Stack
+## Workflow structure
 
-n8n, Gmail (send + threading)
+- **Workflow 1:** Lead Intake & First-Touch Reply
+- **Workflow 2:** Reply Matching & Qualification
 
-## Status
+The two workflows are decoupled, so a delay or failure in reply handling never blocks new leads from getting their first response.
 
-Complete.
+## Reliability
+
+| Rung | How it shows up |
+|---|---|
+| Idempotency | Replies are matched by `threadId`, not by message order or timing, so they always attach to the correct lead |
+| Decoupling | Intake and reply handling run independently, so one can't stall the other |
+
+## Repository contents
+
+- n8n workflow exports (JSON), one per workflow
+- Workflow screenshots
+
+## Running it yourself
+
+1. Import both workflow JSON files into n8n.
+2. Create a Gmail OAuth credential in n8n. Credentials are **not** included in the exports.
+3. Connect Workflow 1's trigger to your lead source (form, webhook, or inbox).
+4. Edit the first-touch email and qualifying questions for your business.
+5. Send a test lead and reply to the email to confirm threading works.
+
+## Limitations
+
+- Email only. SMS follow-up is not implemented in this build.
+- Qualifying questions are fixed per deployment, not adapted per lead.
+
+---
+
+Built by [Alex Idachaba](https://alexidachaba.com) — AI automation for property management operations.
